@@ -20,11 +20,15 @@ defmodule TelemetryMetricsStatsd.EventHandler do
 
     handler_id = {__MODULE__, reporter}
 
+    Enum.group_by(metrics, & &1.event_name)
+    |> Enum.each(fn {event_name, metrics} ->
+      put_metrics(event_name, metrics)
+    end)
+
     :ok =
       :telemetry.attach_many(handler_id, event_names, &__MODULE__.handle_event/4, %{
         reporter: reporter,
         pool_id: pool_id,
-        metrics: metrics,
         mtu: mtu,
         prefix: prefix,
         formatter: formatter,
@@ -32,6 +36,15 @@ defmodule TelemetryMetricsStatsd.EventHandler do
       })
 
     [handler_id]
+  end
+
+  defp put_metrics(event, metrics) do
+    :persistent_term.put({__MODULE__, event}, metrics)
+  end
+
+  @compile {:inline, get_metrics: 1}
+  defp get_metrics(event) do
+    :persistent_term.get({__MODULE__, event})
   end
 
   @spec detach([:telemetry.handler_id()]) :: :ok
@@ -43,17 +56,16 @@ defmodule TelemetryMetricsStatsd.EventHandler do
     :ok
   end
 
-  def handle_event(_event, measurements, metadata, %{
+  def handle_event(event, measurements, metadata, %{
         reporter: reporter,
         pool_id: pool_id,
-        metrics: metrics,
         mtu: mtu,
         prefix: prefix,
         formatter: formatter_mod,
         global_tags: global_tags
       }) do
     packets =
-      for metric <- metrics do
+      for metric <- get_metrics(event) do
         if value = keep?(metric, metadata) && fetch_measurement(metric, measurements, metadata) do
           # The order of tags needs to be preserved so that the final metric name is built correctly.
           tag_values =
