@@ -16,26 +16,25 @@ defmodule TelemetryMetricsStatsd.EventHandler do
           :telemetry.handler_id()
         ]
   def attach(metrics, reporter, pool_id, mtu, prefix, formatter, global_tags) do
-    event_names = metrics |> Enum.map(fn metric -> metric.event_name end) |> Enum.uniq()
+    metrics_by_event = Enum.group_by(metrics, & &1.event_name)
 
-    handler_id = {__MODULE__, reporter}
+    for {event_name, metrics} <- metrics_by_event do
+      handler_id = handler_id(event_name, reporter)
 
-    Enum.group_by(metrics, & &1.event_name)
-    |> Enum.each(fn {event_name, metrics} ->
       put_metrics(event_name, metrics)
-    end)
 
-    :ok =
-      :telemetry.attach_many(handler_id, event_names, &__MODULE__.handle_event/4, %{
-        reporter: reporter,
-        pool_id: pool_id,
-        mtu: mtu,
-        prefix: prefix,
-        formatter: formatter,
-        global_tags: global_tags
-      })
+      :ok =
+        :telemetry.attach(handler_id, event_name, &__MODULE__.handle_event/4, %{
+          reporter: reporter,
+          pool_id: pool_id,
+          mtu: mtu,
+          prefix: prefix,
+          formatter: formatter,
+          global_tags: global_tags
+        })
 
-    [handler_id]
+      handler_id
+    end
   end
 
   defp put_metrics(event, metrics) do
@@ -88,6 +87,11 @@ defmodule TelemetryMetricsStatsd.EventHandler do
       packets ->
         publish_metrics(reporter, pool_id, Packet.build_packets(packets, mtu, "\n"))
     end
+  end
+
+  @spec handler_id(:telemetry.event_name(), reporter :: pid) :: :telemetry.handler_id()
+  defp handler_id(event_name, reporter) do
+    {__MODULE__, reporter, event_name}
   end
 
   @spec keep?(Metrics.t(), :telemetry.event_metadata()) :: boolean()
